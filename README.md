@@ -29,9 +29,9 @@ export FIXED_VERSION_MODEL=your_image_model_name
 export API_KEY=your_api_key
 ```
 这里三个model分别为火山引擎的endpoint id
-创建 endpint id 文档：https://www.volcengine.com/docs/82379/1099522
-查看 endpint id 文档：https://www.volcengine.com/docs/82379/1182403
-查看 apikey 文档：https://www.volcengine.com/docs/82379/1361424
+- 创建 endpint id 文档：https://www.volcengine.com/docs/82379/1099522
+- 查看 endpint id 文档：https://www.volcengine.com/docs/82379/1182403
+- 查看 apikey 文档：https://www.volcengine.com/docs/82379/1361424
 
 ### 运行程序
 确保你已经安装了Go语言环境。在设置好环境变量后，在项目根目录下运行以下命令启动服务器：
