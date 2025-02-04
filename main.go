@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -21,6 +22,77 @@ var fixedVersionModel = os.Getenv("FIXED_VERSION_MODEL")
 
 // 设置API密钥
 var apiKey = os.Getenv("API_KEY")
+
+// 定义请求结构体
+type TokenRequest struct {
+	Model string   `json:"model"`
+	Text  []string `json:"text"`
+}
+
+// 定义响应结构体
+type TokenResponse struct {
+	Object string `json:"object"`
+	Data   []struct {
+		TotalTokens int `json:"total_tokens"`
+	} `json:"data"`
+}
+
+// 获取token数量的方法
+// apiURL: 接口地址
+// apiKey: 认证令牌
+// model: 模型名称
+// texts: 输入的文本数组
+func GetTotalTokens(model string, texts []string) (int, error) {
+	apiURL := "https://ark.cn-beijing.volces.com/api/v3/tokenization"
+	// 创建请求体
+	reqBody := TokenRequest{
+		Model: model,
+		Text:  texts,
+	}
+
+	// 序列化请求体
+	jsonData, err := json.Marshal(reqBody)
+	if err != nil {
+		return 0, fmt.Errorf("序列化请求体失败: %v", err)
+	}
+
+	// 创建HTTP请求
+	req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return 0, fmt.Errorf("创建请求失败: %v", err)
+	}
+
+	// 设置请求头
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+
+	// 发送请求
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("请求发送失败: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// 检查状态码
+	if resp.StatusCode != http.StatusOK {
+		body, _ := ioutil.ReadAll(resp.Body)
+		return 0, fmt.Errorf("API返回错误状态码: %d, 响应: %s", resp.StatusCode, string(body))
+	}
+
+	// 解析响应
+	var tokenResp TokenResponse
+	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
+		return 0, fmt.Errorf("响应解析失败: %v", err)
+	}
+
+	// 检查数据有效性
+	if len(tokenResp.Data) == 0 {
+		return 0, fmt.Errorf("响应数据为空")
+	}
+
+	return tokenResp.Data[0].TotalTokens, nil
+}
 
 type Message struct {
 	Role    string          `json:"role"`
@@ -112,6 +184,8 @@ func handler(w http.ResponseWriter, r *http.Request) {
 			openaiReq.Temperature = &defaultTopP
 		}
 
+		var messageArray []string
+
 		// 遍历 messages 列表并处理每个 Message 的 content 字段
 		for i, message := range openaiReq.Messages {
 			// 声明一个空的 interface{} 切片，用于存储解析后的 content 字段
@@ -141,14 +215,8 @@ func handler(w http.ResponseWriter, r *http.Request) {
 				if allText {
 					// 使用 strconv.Quote 确保字符串合法
 					openaiReq.Messages[i].Content = json.RawMessage(strconv.Quote(combinedText))
-					// 使用不同模型
-					if len(combinedText) > 15000 {
-						openaiReq.Model = fixedTextLongModel
-						log.Printf("Text is too long(%d), so use long text model", len(combinedText))
-					} else {
-						openaiReq.Model = fixedTextModel
-						log.Printf("Text is too short(%d), so use text model", len(combinedText))
-					}
+					openaiReq.Model = fixedTextModel
+					messageArray = append(messageArray, combinedText)
 				}
 			} else {
 				// 将 content 解析为 string，如果解析成功则假定 content 是纯文本
@@ -169,6 +237,14 @@ func handler(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+
+		num, err := GetTotalTokens(fixedTextLongModel, messageArray)
+		if err != nil {
+			if num > 25000 && openaiReq.Model != fixedVersionModel {
+				openaiReq.Model = fixedTextLongModel
+			}
+		}
+		log.Printf("use model: %s, input text: %d", openaiReq.Model, num)
 
 		// 将处理后的请求体转换为字节数组
 		newReqBody, err := json.Marshal(openaiReq)
