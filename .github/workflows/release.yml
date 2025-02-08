@@ -1,0 +1,107 @@
+name: Release Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '输入发布的 tag 名称'
+        required: true
+        default: 'v0.0.0'
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04]
+        platform: 
+          - linux/amd64
+          - linux/aarch64
+        include:
+          - platform: linux/amd64
+            platform_name: linux-amd64
+            go_arch: amd64
+          - platform: linux/aarch64
+            platform_name: linux-arm64
+            go_arch: arm64
+
+    runs-on: ${{ matrix.os }}
+    env:
+      ACTIONS_ALLOW_UNSECURE_COMMANDS: true
+      
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.22.5'
+        
+    - name: Get release tag
+      id: get-tag
+      shell: bash
+      run: |
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          echo "tag=${{ github.event.inputs.tag }}" >> $GITHUB_OUTPUT
+        else
+          echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Validate inputs
+      run: |
+        # 验证tag格式
+        if [[ ! "${{ steps.get-tag.outputs.tag }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          echo "错误：标签格式无效，应为vx.x.x"
+          exit 1
+        fi
+
+        # 验证平台参数
+        PLATFORM=${{ matrix.platform_name }}
+        if [[ -z "${PLATFORM}" ]]; then
+          echo "错误：平台参数为空"
+          exit 1
+        fi
+
+        # 压缩包名称
+        ARTIFACT_NAME=doubao-${PLATFORM}.zip
+        echo "ARTIFACT_NAME=${ARTIFACT_NAME}" >> $GITHUB_ENV
+
+    - name: Build
+      env:
+        GOOS: linux
+        GOARCH: ${{ matrix.go_arch }}
+        CGO_ENABLED: 0
+      run: |
+        go mod tidy
+        go build -o doubao-server main.go
+
+    - name: Record build time
+      run: |
+        echo "BUILD_TIME=$(TZ='Asia/Shanghai' date +'%Y-%m-%d %H:%M:%S')" >> $GITHUB_ENV
+
+    - name: Package artifact
+      run: |
+        mkdir -p release
+        cp doubao-server release/
+        cd release
+        zip -r ../${{ env.ARTIFACT_NAME }} ./*
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ env.ARTIFACT_NAME }}
+        path: ${{ env.ARTIFACT_NAME }}
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      if: success()
+      with:
+        files: ${{ env.ARTIFACT_NAME }}
+        tag_name: ${{ steps.get-tag.outputs.tag }}
+        body: |
+          Release At: ${{ env.BUILD_TIME }}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} 
